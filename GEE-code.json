@@ -1,0 +1,534 @@
+
+var roi = ee.Geometry.Point(-73.3994300, -37.2885700);
+var roi2 = ee.FeatureCollection([
+  ee.Feature(geometry2)
+]);
+//////////////////////////////////////////////7
+
+var CLASSIFICATIONS = {
+  0: '000000',  // water
+  1: 'FFFFFF',  // artificial surfaces
+  2: 'CE7E45',  // cultivated land
+  3: 'DF923D',  // forest
+  4: 'FCC168',  // grassland
+  5: 'D3D3D3',  // shrubland
+  6: 'B4A582',  // wetland
+  7: 'F7E084',  // barren
+  8: '6F6F6F',  // snow and ice
+};
+
+function fun_forest() {
+  var fromValues2 = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
+  var toValues2 = [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+  var forest = ee.ImageCollection('ESA/WorldCover/v200').first()
+    .select("Map")
+    .remap(fromValues2, toValues2)
+    .rename("landcover")
+    .unmask(0)  // fill missing values with 0 (water)
+    .byte();
+
+  return forest;
+}
+var forest = fun_forest();
+//
+function fun_agri() {
+  var fromValues2 = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
+  var toValues2 = [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+
+  var agricultura = ee.ImageCollection('ESA/WorldCover/v200').first()
+    .select("Map")
+    .remap(fromValues2, toValues2)
+    .rename("landcover")
+    .unmask(0)  // fill missing values with 0 (water)
+    .byte();
+
+  return agricultura;
+}
+var agricultura = fun_agri();
+//
+function fun_seco() {
+  var fromValues3 = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
+  var toValues3 = [0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0];
+
+  var seco = ee.ImageCollection('ESA/WorldCover/v200').first()
+    .select("Map")
+    .remap(fromValues3, toValues3)
+    .rename("landcover")
+    .unmask(0)  // fill missing values with 0 (water)
+    .byte();
+
+  return seco;
+}
+var seco = fun_seco();
+//
+function fun_agua() {
+  var fromValues4 = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
+  var toValues4 = [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
+
+  var agua = ee.Image("ESA/WorldCover/v100/2020")
+    .select("Map")
+    .remap(fromValues4, toValues4)
+    .rename("landcover")
+    .unmask(0)  // fill missing values with 0 (water)
+    .byte();
+
+  return agua;
+}
+var agua = fun_agua();
+//
+function fun_humedo() {
+  var fromValues5 = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100];
+  var toValues5 = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1];
+
+  var humedo = ee.ImageCollection('ESA/WorldCover/v200').first()
+    .select("Map")
+    .remap(fromValues5, toValues5)
+    .rename("landcover")
+    .unmask(0)  // fill missing values with 0 (water)
+    .byte();
+
+  return humedo;
+}
+var humedo = fun_humedo();
+
+///////////////////////////////////////7
+var visParams = {
+  bands: ["landcover"],
+  max: Object.keys(CLASSIFICATIONS).length - 1,
+  palette: Object.keys(CLASSIFICATIONS).map(function(key) {
+    return CLASSIFICATIONS[key];
+  })
+
+};
+Map.addLayer(forest.updateMask(forest.neq(0)), visParams, 'Dynamic');
+var polygon = roi2;
+/////////////////////////////////////
+////////////////////////////////
+
+var startDate = ee.Date('2022-12-01');
+var endDate = ee.Date('2023-01-30');
+// Load Sentinel-2 collection and filter based on the region and dates
+var collection = ee.ImageCollection('COPERNICUS/S2_SR').filterMetadata('CLOUD_COVERAGE_ASSESSMENT', 'less_than', 30)
+  .filterBounds(geometry)
+  .filterDate(startDate, endDate)
+  .select(['B1','B2','B3','B4', 'B8','QA60']);  // Select bands B4 (red) and B8 (nir)
+
+var calculateNDVI = function(image) {
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return image.addBands(ndvi);
+};
+var ndviCollection = collection.map(calculateNDVI);
+//
+///////////
+//TOTAL
+var maskedNDVI_t = ndviCollection.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask);
+});
+var indices_t = maskedNDVI_t
+    .median();
+////////////
+//FOREST
+var maskedNDVI = ndviCollection.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  var ndvi = image.select('NDVI');
+  var masked = forest.neq(0); // Aca va la mascara
+  return image.updateMask(masked).updateMask(mask);
+});
+var indices = maskedNDVI
+    .median();
+////////////
+//AGRICULT
+var masked_agri = ndviCollection.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  var ndvi = image.select('NDVI');
+  var masked = agricultura.neq(0); // Aca va la mascara
+  return image.updateMask(masked).updateMask(mask);
+});
+var indices_agri = masked_agri
+    .median();
+////////////
+//SECO
+var masked_seco = ndviCollection.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  var ndvi = image.select('NDVI');
+  var masked = seco.neq(0); // Aca va la mascara
+  return image.updateMask(masked).updateMask(mask);
+});
+var indices_seco = masked_seco
+    .median();
+////////////
+//AGUA
+var masked_agua = ndviCollection.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  var ndvi = image.select('NDVI');
+  var masked = agua.neq(0); // Aca va la mascara
+  return image.updateMask(masked).updateMask(mask);
+});
+var indices_agua = masked_agua
+    .median();
+////////////
+//HUMEDO
+var masked_humedo = ndviCollection.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  var ndvi = image.select('NDVI');
+  var masked = humedo.neq(0); // Aca va la mascara
+  return image.updateMask(masked).updateMask(mask);
+});
+var indices_humedo = masked_humedo
+    .median();
+
+
+
+Map.addLayer(indices_humedo, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'humedo');
+Map.addLayer(indices_agri, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'agricultura');
+Map.addLayer(indices_seco, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'seco');
+Map.addLayer(indices_agua, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'agua');
+Map.addLayer(indices, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'forest');
+Map.addLayer(collection, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'Sentinel-2 SR RGB');
+
+var polygons = ee.FeatureCollection([
+  ee.Feature(agua_pre, {'class': 0}),
+  ee.Feature(seco_pre, {'class': 1}),
+  ee.Feature(humedo_pre, {'class': 2}),
+  ee.Feature(forest_pre, {'class': 3}),
+  ee.Feature(agro_pre, {'class': 4})
+]);
+
+///////////////////////////////////////////////
+var normalizedRange = [0, 1]; // Example: normalize values between 0 and 1
+var normalizedImage_t = indices_t.unitScale(0, 10000).toFloat().clamp(0, 1);
+var normalizedImage = indices.unitScale(0, 10000).toFloat().clamp(0, 1);
+var norma_agri = indices_agri.unitScale(0, 10000).toFloat().clamp(0, 1);
+var norma_agua = indices_agua.unitScale(0, 10000).toFloat().clamp(0, 1);
+var norma_seco = indices_seco.unitScale(0, 10000).toFloat().clamp(0, 1);
+var norma_humedo = indices_humedo.unitScale(0, 10000).toFloat().clamp(0, 1);
+
+///////////////////////////////////////////////////
+
+var stats_forest = normalizedImage.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roi2,
+  scale: 100,
+  maxPixels: 1e10
+  })
+print(stats_forest,'forest')
+var stats_agricultural = norma_agri.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roi2,
+  scale: 100,
+  maxPixels: 1e10
+  })
+print(stats_agricultural,'agricultura')
+var stats_agua = norma_agua.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roi2,
+  scale: 100,
+  maxPixels: 1e10
+  })
+var stats_seco = norma_seco.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roi2,
+  scale: 100,
+  maxPixels: 1e10
+  })
+var stats_humedo = norma_humedo.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: roi2,
+  scale: 100,
+  maxPixels: 1e10
+  })
+
+////
+var b7_f = normalizedImage.select('B8').subtract(ee.Number(stats_forest.get('B8'))).rename('B8')
+var b7_forest = b7_f.pow(2)
+var b4_f = normalizedImage.select('B4').subtract(ee.Number(stats_forest.get('B4'))).rename('B4')
+var b4_forest = b4_f.pow(2)
+var b3_f = normalizedImage.select('B3').subtract(ee.Number(stats_forest.get('B3'))).rename('B3')
+var b3_forest = b3_f.pow(2)
+var b2_f = normalizedImage.select('B2').subtract(ee.Number(stats_forest.get('B2'))).rename('B2')
+var b2_forest = b2_f.pow(2)
+var b1_f = normalizedImage.select('B1').subtract(ee.Number(stats_forest.get('B1'))).rename('B1')
+var b1_forest = b1_f.pow(2)
+
+var cen_forest = normalizedImage.expression(
+    '(B1+ B2 + B3 + B4 + B8)**0.5', {
+      'B1': b1_forest.select('B1'),
+      'B2': b2_forest.select('B2'),
+      'B3': b3_forest.select('B3'),
+      'B4': b4_forest.select('B4'),
+      'B8': b7_forest.select('B8')
+    }).rename('diff');
+
+var final_forest = normalizedImage.addBands(cen_forest)
+var final_f = final_forest.updateMask(final_forest.select('diff'))
+
+////////////
+//AGRICULTURAL
+var b7_a = norma_agri.select('B8').subtract(ee.Number(stats_agricultural.get('B8'))).rename('B8')
+var b7_agri = b7_a.pow(2)
+var b4_a = norma_agri.select('B4').subtract(ee.Number(stats_agricultural.get('B4'))).rename('B4')
+var b4_agri = b4_a.pow(2)
+var b3_a = norma_agri.select('B3').subtract(ee.Number(stats_agricultural.get('B3'))).rename('B3')
+var b3_agri = b3_a.pow(2)
+var b2_a = norma_agri.select('B2').subtract(ee.Number(stats_agricultural.get('B2'))).rename('B2')
+var b2_agri = b2_a.pow(2)
+var b1_a = norma_agri.select('B1').subtract(ee.Number(stats_agricultural.get('B1'))).rename('B1')
+var b1_agri = b1_a.pow(2)
+
+var cen_agri = norma_agri.expression(
+    '(B1+ B2 + B3 + B4 + B8)**0.5', {
+      'B1': b1_agri.select('B1'),
+      'B2': b2_agri.select('B2'),
+      'B3': b3_agri.select('B3'),
+      'B4': b4_agri.select('B4'),
+      'B8': b7_agri.select('B8')
+    }).rename('diff');
+
+var final_agri = norma_agri.addBands(cen_agri)
+var final_a = final_agri.updateMask(final_agri.select('diff'))
+////////////
+//Water
+var b7_h = norma_agua.select('B8').subtract(ee.Number(stats_agua.get('B8'))).rename('B8')
+var b7_agua = b7_h.pow(2)
+var b4_h = norma_agua.select('B4').subtract(ee.Number(stats_agua.get('B4'))).rename('B4')
+var b4_agua = b4_h.pow(2)
+var b3_h = norma_agua.select('B3').subtract(ee.Number(stats_agua.get('B3'))).rename('B3')
+var b3_agua = b3_h.pow(2)
+var b2_h = norma_agua.select('B2').subtract(ee.Number(stats_agua.get('B2'))).rename('B2')
+var b2_agua = b2_h.pow(2)
+var b1_h = norma_agua.select('B1').subtract(ee.Number(stats_agua.get('B1'))).rename('B1')
+var b1_agua = b1_h.pow(2)
+
+var cen_agua = norma_agua.expression(
+    '(B1+ B2 + B3 + B4 + B8)**0.5', {
+      'B1': b1_agua.select('B1'),
+      'B2': b2_agua.select('B2'),
+      'B3': b3_agua.select('B3'),
+      'B4': b4_agua.select('B4'),
+      'B8': b7_agua.select('B8')
+    }).rename('diff');
+
+var final_agua = norma_agua.addBands(cen_agua)
+var final_h = final_agua.updateMask(final_agua.select('diff'))
+////////////
+//Sediment Dry
+var b7_s = norma_seco.select('B8').subtract(ee.Number(stats_seco.get('B8'))).rename('B8')
+var b7_seco = b7_s.pow(2)
+var b4_s = norma_seco.select('B4').subtract(ee.Number(stats_seco.get('B4'))).rename('B4')
+var b4_seco = b4_s.pow(2)
+var b3_s = norma_seco.select('B3').subtract(ee.Number(stats_seco.get('B3'))).rename('B3')
+var b3_seco = b3_s.pow(2)
+var b2_s = norma_seco.select('B2').subtract(ee.Number(stats_seco.get('B2'))).rename('B2')
+var b2_seco = b2_s.pow(2)
+var b1_s = norma_seco.select('B1').subtract(ee.Number(stats_seco.get('B1'))).rename('B1')
+var b1_seco = b1_s.pow(2)
+
+var cen_seco = norma_seco.expression(
+    '(B1+ B2 + B3 + B4 + B8)**0.5', {
+      'B1': b1_seco.select('B1'),
+      'B2': b2_seco.select('B2'),
+      'B3': b3_seco.select('B3'),
+      'B4': b4_seco.select('B4'),
+      'B8': b7_seco.select('B8')
+    }).rename('diff');
+
+var final_seco = norma_seco.addBands(cen_seco)
+var final_s = final_seco.updateMask(final_seco.select('diff'))
+
+////////////
+//Wet
+var b7_p = norma_humedo.select('B8').subtract(ee.Number(stats_humedo.get('B8'))).rename('B8')
+var b7_humedo = b7_p.pow(2)
+var b4_p = norma_humedo.select('B4').subtract(ee.Number(stats_humedo.get('B4'))).rename('B4')
+var b4_humedo = b4_p.pow(2)
+var b3_p = norma_humedo.select('B3').subtract(ee.Number(stats_humedo.get('B3'))).rename('B3')
+var b3_humedo = b3_p.pow(2)
+var b2_p = norma_humedo.select('B2').subtract(ee.Number(stats_humedo.get('B2'))).rename('B2')
+var b2_humedo = b2_p.pow(2)
+var b1_p = norma_humedo.select('B1').subtract(ee.Number(stats_humedo.get('B1'))).rename('B1')
+var b1_humedo = b1_p.pow(2)
+
+var cen_humedo = norma_humedo.expression(
+    '(B1+ B2 + B3 + B4 + B8)**0.5', {
+      'B1': b1_humedo.select('B1'),
+      'B2': b2_humedo.select('B2'),
+      'B3': b3_humedo.select('B3'),
+      'B4': b4_humedo.select('B4'),
+      'B8': b7_humedo.select('B8')
+    }).rename('diff');
+
+var final_humedo = norma_humedo.addBands(cen_humedo)
+var final_p = final_humedo.updateMask(final_humedo.select('diff'))
+////////////
+// Select the bands to join
+var bandsToJoin = ['B8','B4', 'B3', 'B2'];
+var combined_img = ee.ImageCollection([final_f,final_a,final_h,final_s,final_p]).mosaic();
+print(combined_img)
+Map.addLayer(combined_img,{bands: ['B4', 'B3', 'B2']},"combinacion");
+//////////////////////////
+var bands = ['B8','B4', 'B3', 'B2'];
+///////////////////////////////////////////////////////7
+///
+///////////////////////
+var startDate2 = ee.Date('2023-03-01');
+var endDate2 = ee.Date('2023-04-01');
+var collection2 = ee.ImageCollection('COPERNICUS/S2_SR').filterMetadata('CLOUD_COVERAGE_ASSESSMENT', 'less_than', 30)
+  .filterBounds(geometry)
+  .filterDate(startDate2, endDate2)
+  .select(['B1','B2','B3','B4', 'B8','QA60']);  // Select bands B4 (red) and B8 (nir)
+var ndviCollection2 = collection2.map(calculateNDVI);
+
+var maskedNDVI_t2 = ndviCollection2.map(function(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = 1 << 10;  // Bit 10 represents clouds
+  var cirrusBitMask = 1 << 11;  // Bit 11 represents cirrus clouds
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask);
+});
+var indices_t2 = maskedNDVI_t2.median();
+Map.addLayer(indices_t2, {bands: ['B4', 'B3', 'B2'], min: 0, max: 3000}, 'Sentinel-2 SR Image');
+var normalizedImage_t2 = indices_t2.unitScale(0, 10000).toFloat().clamp(0, 1);
+
+var ClippedToFeatureCollection = combined_img.clipToCollection(polygons);
+var ClippedToFeatureCollection2 = normalizedImage_t2.clipToCollection(polygons);
+//////////////////////////////////////////////////////////7
+var dist= combined_img.select(bands).spectralDistance(normalizedImage_t2.select(bands), 'sed')
+
+var composite_not = combined_img.select(bands).updateMask(dist.lt(0.005))
+var composite_ch = combined_img.select(bands).updateMask(dist.gt(0.005))
+Map.addLayer(composite_not, {bands: ['B4', 'B3', 'B2']}, 'distance_pre');
+Map.addLayer(composite_ch, {bands: ['B4', 'B3', 'B2']}, 'distance_post');
+
+var b8_dist = normalizedImage_t.select('B8').subtract(normalizedImage_t2.select('B8')).rename('B8')
+var b2_dist = normalizedImage_t.select('B2').subtract(normalizedImage_t2.select('B2')).rename('B2')
+var b3_dist = normalizedImage_t.select('B3').subtract(normalizedImage_t2.select('B3')).rename('B3')
+var b4_dist = normalizedImage_t.select('B4').subtract(normalizedImage_t2.select('B4')).rename('B4')
+
+////////////////////////////////////////
+var combi_total_ndvi = b2_dist.addBands([b3_dist,b4_dist,b8_dist])
+print(combi_total_ndvi, {bands: ['B4', 'B3', 'B2']},"combinacion total")
+////////////////
+var polygons_not = ee.FeatureCollection([
+  ee.Feature(not_change, {'class': 0})]);
+
+var polygons_ch = ee.FeatureCollection([
+  ee.Feature(change, {'class': 1})]);
+
+var referencePolygons =polygons_not;
+var referenceClasses = referencePolygons.aggregate_array('class');
+print(referenceClasses, "referencia")
+var numPointsPerClass = 1000;
+var referencePoints = referencePolygons.map(function(polygon) {
+  var classValue = polygon.get('class');
+  var points = ee.FeatureCollection.randomPoints({
+    region: polygon.geometry(),
+    points: numPointsPerClass,
+    seed: 0
+  }).map(function(point) {
+    return point.set('class', classValue);
+  });
+  return points;
+}).flatten();
+
+var training_not = combi_total_ndvi.select(bands).sampleRegions({
+  collection: referencePoints,
+  properties: ['class'],
+  scale: 10,
+});
+//////////////////////////////////
+var referencePolygons =polygons_ch;
+var referenceClasses = referencePolygons.aggregate_array('class');
+
+var referencePoints = referencePolygons.map(function(polygon) {
+  var classValue = polygon.get('class');
+  var points = ee.FeatureCollection.randomPoints({
+    region: polygon.geometry(),
+    points: numPointsPerClass,
+    seed: 0
+  }).map(function(point) {
+    return point.set('class', classValue);
+  });
+  return points;
+}).flatten();
+
+var training_ch = combi_total_ndvi.select(bands).sampleRegions({
+  collection: referencePoints,
+  properties: ['class'],
+  scale: 10,
+});
+var training= training_not.merge(training_ch)
+////////////////////////////////////
+var classifier = ee.Classifier.smileRandomForest(50).train({
+  features: training,
+  classProperty: 'class',
+  inputProperties: bands
+});
+
+//Run the classification
+var classified = combi_total_ndvi.select(bands).classify(classifier);
+Map.centerObject(geometry, 8);
+Map.addLayer(classified.clip(geometry2).select('classification'),{min: 0, max: 1, 
+palette: ['red', 'green', '152106', 'blue','6f6f6f']},'classification2');
+
+// Select the classification band from the classified collection
+var classificationImage = classified.select('classification');
+var referencePolygons =polygons_ch;
+// Get the class attribute from the reference polygons
+var referenceClasses = referencePolygons.aggregate_array('class');
+var numPointsPerClass = 500;
+var referencePoints = referencePolygons.map(function(polygon) {
+  var classValue = polygon.get('class');
+  var points = ee.FeatureCollection.randomPoints({
+    region: polygon.geometry(),
+    points: numPointsPerClass,
+    seed: 0
+  }).map(function(point) {
+    return point.set('class', classValue);
+  });
+  return points;
+}).flatten();
+
+// Get the classification values at the reference points
+var classificationPoints = classificationImage.select("classification").sampleRegions({
+  collection: referencePoints,
+  properties: ['class'],
+  scale: 10,
+});
+
+// Compare the reference class with the classification result
+var accuracy = classificationPoints.map(function(feature) {
+  var referenceClass = feature.get('class');
+  var classificationClass = feature.get('classification');
+  var correct = ee.Number(referenceClass).eq(classificationClass);
+  return feature.set('correct', correct);
+});
+
+// Calculate the overall accuracy
+var overallAccuracy = accuracy.aggregate_mean('correct');
+//
+Export.image.toDrive({
+  image: classified.clip(geometry2).select('classification'),
+  description: 'RF-change',
+  scale: 10,
+  region: geometry2
+});
